@@ -12,6 +12,10 @@ The actor network we trained can output the current position of the robot, while
 
 
 
+https://github.com/nubot-nudt/Grand_RM/assets/49311079/559d1de1-1f4a-4060-a699-e15cf65fe92f
+
+
+
 ## Installation
 
 __Requirements:__ 
@@ -20,6 +24,7 @@ __Requirements:__
 - [x] The isaac-sim python conda environment `isaac-sim-lrp `;
 - [x] pinoccio for inverse kinematics;`conda install pinocchio -c conda-forge`
 - [x] You can see requirements.txt for detailed;
+- [x] You need to download the usd files from https://drive.google.com/drive/folders/1OY5Kb2V-6pJNmOcbLwq3pZWQFJPIuhET?usp=drive_link; 
 
 ### Setup RL algorithm and environments
 - For RL, we use the **mushroom-rl** library:
@@ -68,7 +73,8 @@ python learned_robot_placement/scripts/train_task_fetch.py task=FetchMultiObjFet
 
   v1: Task with one table, and one goal object and three tabletop obstacles;
 
-  ![Task1_Clip](/home/lu/Desktop/thesis pictures/Task1_Clip.png)
+  ![Task1_Clip](https://github.com/nubot-nudt/Grand_RM/assets/49311079/a1a9d0bc-96ed-4ad8-bd1d-ac4bb71f829d)
+
 
   ```
   python learned_robot_placement/scripts/train_task_fetch.py task=FetchMultiObjFetching_v11 train=FetchMultiObjFetchingGAT num_seeds=1 headless=True
@@ -76,7 +82,8 @@ python learned_robot_placement/scripts/train_task_fetch.py task=FetchMultiObjFet
 
   v2: Task with one table, and one goal object, three tabletop obstacles and one ground obstacle like the chair;
 
-  ![Task2_Clip](/home/lu/Desktop/thesis pictures/Task2_Clip.png)
+  ![Task2_Clip](https://github.com/nubot-nudt/Grand_RM/assets/49311079/c0770069-391e-4e27-b044-c733ff2419e4)
+
 
   ```
   python learned_robot_placement/scripts/train_task_fetch.py task=FetchMultiObjFetching_v21 train=FetchMultiObjFetchingGAT num_seeds=1 headless=True
@@ -84,7 +91,8 @@ python learned_robot_placement/scripts/train_task_fetch.py task=FetchMultiObjFet
 
   v3: Semi-enclosed task, the goal object was surrounded by three obstacle plank;
 
-  ![Task3_Clip](/home/lu/Desktop/thesis pictures/Task3_Clip.png)
+  ![Task3_Clip](https://github.com/nubot-nudt/Grand_RM/assets/49311079/755cf724-3325-41a7-8ac6-88784582e17c)
+
 
   ```
   python learned_robot_placement/scripts/train_task_fetch.py task=FetchMultiObjFetching_v31 train=FetchMultiObjFetchingGAT num_seeds=1 headless=True
@@ -92,7 +100,8 @@ python learned_robot_placement/scripts/train_task_fetch.py task=FetchMultiObjFet
 
   v4：Enclosed task, the goal object was surrounded by three obstacle plank and a lid;
 
-  ![Task4_Clip](/home/lu/Desktop/thesis pictures/Task4_Clip.png)
+  ![Task4_Clip](https://github.com/nubot-nudt/Grand_RM/assets/49311079/42a7b1a1-0b0a-40f1-846c-1c176d573e4d)
+
 
   ```
   python learned_robot_placement/scripts/train_task_fetch.py task=FetchMultiObjFetching_v41 train=FetchMultiObjFetchingGAT num_seeds=1 headless=True
@@ -100,7 +109,8 @@ python learned_robot_placement/scripts/train_task_fetch.py task=FetchMultiObjFet
 
   reach task: The robot need to reach to goal;
 
-  ![reach_task](/home/lu/Desktop/thesis pictures/reach_task.png)
+  <img width="466" alt="reach_task" src="https://github.com/nubot-nudt/Grand_RM/assets/49311079/981ce003-5490-4df2-831f-74e6fc69cdd4">
+
 
   ```
   python learned_robot_placement/scripts/train__reach.py task=FetchReaching train=FetchReachingBHyRL num_seeds=1 headless=True
