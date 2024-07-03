@@ -1,4 +1,4 @@
-# Learned Robot Placement
+# Graph Reinforcement Learning-based Reachability Map Generation for Mobile Manipulation under Flexible Environment
 
 Based on our research paper: **Graph Reinforcement Learning-based Reachability Map Generation for Mobile Manipulation under Flexible Environment**
 
