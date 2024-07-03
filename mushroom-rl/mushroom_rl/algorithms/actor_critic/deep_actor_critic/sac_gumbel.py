@@ -1,0 +1,371 @@
+import numpy as np
+
+import torch
+import torch.optim as optim
+import torch.nn.functional as F
+
+from mushroom_rl.algorithms.actor_critic.deep_actor_critic import DeepAC
+from mushroom_rl.policy import Policy
+from mushroom_rl.approximators import Regressor
+from mushroom_rl.approximators.parametric import TorchApproximator
+from mushroom_rl.utils.replay_memory import ReplayMemory
+from mushroom_rl.utils.parameters import to_parameter
+
+from copy import deepcopy
+
+
+class GumbelSoftmax(torch.distributions.RelaxedOneHotCategorical):
+    '''
+    A differentiable Categorical distribution using reparametrization trick with Gumbel-Softmax
+    Explanation http://amid.fish/assets/gumbel.html
+    NOTE: use this in place PyTorch's RelaxedOneHotCategorical distribution since its log_prob is not working right (returns positive values)
+    Papers:
+    [1] The Concrete Distribution: A Continuous Relaxation of Discrete Random Variables (Maddison et al, 2017)
+    [2] Categorical Reparametrization with Gumbel-Softmax (Jang et al, 2017)
+    '''
+
+    def sample(self, sample_shape=torch.Size()):
+        '''Gumbel-softmax sampling. Note rsample is inherited from RelaxedOneHotCategorical'''
+        u = torch.empty(self.logits.size(), device=self.logits.device, dtype=self.logits.dtype).uniform_(0, 1)
+        noisy_logits = self.logits - torch.log(-torch.log(u))
+        return torch.argmax(noisy_logits, dim=-1)
+
+    def rsample(self, sample_shape=torch.Size()):
+        '''
+        Gumbel-softmax resampling using the Straight-Through trick.
+        To see standalone code of how this works, refer to https://gist.github.com/yzh119/fd2146d2aeb329d067568a493b20172f
+        '''
+        rout = super().rsample(sample_shape)  # differentiable
+        out = F.one_hot(torch.argmax(rout, dim=-1), self.logits.shape[-1]).float()
+        return (out - rout).detach() + rout
+
+    def log_prob(self, value):
+        '''value is one-hot or relaxed'''
+        if value.shape != self.logits.shape:
+            value = F.one_hot(value.long(), self.logits.shape[-1]).float()
+            assert value.shape == self.logits.shape
+        return - torch.sum(- value * F.log_softmax(self.logits, -1), -1)
+    
+    def entropy(self):
+        min_real = torch.finfo(self.logits.dtype).min
+        logits = torch.clamp(self.logits, min=min_real)
+        p_log_p = logits * self.probs
+        return -p_log_p.sum(-1)
+
+
+class SAC_gumbelPolicy(Policy):
+    """
+    Class used to implement the policy used by the Soft Actor-Critic
+    algorithm. The policy is a relaxed categorcial distribution policy.
+    This class implements the compute_action_and_log_prob and the
+    compute_action_and_log_prob_t methods, that are fundamental for
+    the internals calculations of the SAC algorithm.
+
+    """
+    def __init__(self, actor_approximator, temperature=1.0):
+        """
+        Constructor.
+
+        Args:
+            actor_approximator (Regressor): a regressor computing categorical action logits given a
+                state;
+
+        """
+        self._actor_approximator = actor_approximator
+        self._temperature = torch.tensor(temperature)
+
+        use_cuda = self._actor_approximator.model.use_cuda
+
+        # if use_cuda:
+        #     self._delta_a = self._delta_a.cuda()
+        #     self._central_a = self._central_a.cuda()
+
+        self._add_save_attr(
+            _actor_approximator='mushroom',
+            _temperature='torch',
+        )
+
+    def __call__(self, state, action):
+        raise NotImplementedError
+
+    def draw_action(self, state):        
+        action = self.compute_action_and_log_prob_t(state, compute_log_prob=False).detach().cpu().numpy()
+        return action.astype('int') # So that gym recognizes it as one hot integers
+
+    def compute_action_and_log_prob(self, state):
+        """
+        Function that samples actions using the reparametrization trick and
+        the log probability for such actions.
+
+        Args:
+            state (np.ndarray): the state in which the action is sampled.
+
+        Returns:
+            The actions sampled and the log probability as numpy arrays.
+
+        """
+        a, log_prob = self.compute_action_and_log_prob_t(state)
+        return a.detach().cpu().numpy(), log_prob.detach().cpu().numpy()
+
+    def compute_action_and_log_prob_t(self, state, compute_log_prob=True):
+        """
+        Function that samples actions using the reparametrization trick and,
+        optionally, the log probability for such actions.
+
+        Args:
+            state (np.ndarray): the state in which the action is sampled;
+            compute_log_prob (bool, True): whether to compute the log
+            probability or not.
+
+        Returns:
+            The actions sampled and, optionally, the log probability as torch
+            tensors.
+
+        """
+        dist = self.distribution(state)
+        a = dist.rsample()
+
+        if compute_log_prob:
+            log_prob = dist.log_prob(a)
+            return a, log_prob
+        else:
+            return a
+
+    def distribution(self, state):
+        """
+        Compute the policy distribution in the given states.
+
+        Args:
+            state (np.ndarray): the set of states where the distribution is
+                computed.
+
+        Returns:
+            The torch distribution for the provided states.
+
+        """
+        logits = self._actor_approximator.predict(state, output_tensor=True)
+
+        return GumbelSoftmax(temperature=self._temperature, logits=logits)
+
+    def entropy(self, state=None):
+        """
+        Compute the entropy of the policy.
+
+        Args:
+            state (np.ndarray): the set of states to consider.
+
+        Returns:
+            The value of the entropy of the policy.
+
+        """
+        return torch.mean(self.distribution(state).entropy()).detach().cpu().numpy().item()
+
+    def reset(self):
+        pass
+
+    def set_weights(self, weights):
+        """
+        Setter.
+
+        Args:
+            weights (np.ndarray): the vector of the new weights to be used by
+                the policy.
+
+        """
+
+        self._actor_approximator.set_weights(weights)
+
+    def get_weights(self):
+        """
+        Getter.
+
+        Returns:
+             The current policy weights.
+
+        """
+
+        return self._actor_approximator.get_weights()
+
+    @property
+    def use_cuda(self):
+        """
+        True if the policy is using cuda_tensors.
+        """
+        return self._actor_approximator.model.use_cuda
+
+    def parameters(self):
+        """
+        Returns the trainable policy parameters, as expected by torch
+        optimizers.
+
+        Returns:
+            List of parameters to be optimized.
+
+        """
+        return self._actor_approximator.model.network.parameters()
+
+
+class SAC_gumbel(DeepAC):
+    """
+    Soft Actor-Critic algorithm.
+    "Soft Actor-Critic Algorithms and Applications".
+    Haarnoja T. et al.. 2019.
+
+    """
+    def __init__(self, mdp_info, actor_params,
+                 actor_optimizer, critic_params, batch_size,
+                 initial_replay_size, max_replay_size, warmup_transitions, tau,
+                 lr_alpha, temperature=1.0, target_entropy=None,
+                 critic_fit_params=None):
+        """
+        Constructor.
+
+        Args:
+            actor_params (dict): parameters of the actor approximator
+                to build;
+            actor_optimizer (dict): parameters to specify the actor
+                optimizer algorithm;
+            critic_params (dict): parameters of the critic approximator to
+                build;
+            batch_size ((int, Parameter)): the number of samples in a batch;
+            initial_replay_size (int): the number of samples to collect before
+                starting the learning;
+            max_replay_size (int): the maximum number of samples in the replay
+                memory;
+            warmup_transitions ([int, Parameter]): number of samples to accumulate in the
+                replay memory to start the policy fitting;
+            tau ([float, Parameter]): value of coefficient for soft updates;
+            lr_alpha ([float, Parameter]): Learning rate for the entropy coefficient;
+            temperature (float): the temperature for the softmax part of the gumbel reparametrization
+            target_entropy (float, None): target entropy for the policy, if
+                None a default value is computed ;
+            critic_fit_params (dict, None): parameters of the fitting algorithm
+                of the critic approximator.
+
+        """
+        self._critic_fit_params = dict() if critic_fit_params is None else critic_fit_params
+
+        self._batch_size = to_parameter(batch_size)
+        self._warmup_transitions = to_parameter(warmup_transitions)
+        self._tau = to_parameter(tau)
+
+        if target_entropy is None:
+            self._target_entropy = -np.prod(mdp_info.action_space.n).astype(np.float32)
+        else:
+            self._target_entropy = target_entropy
+
+        self._replay_memory = ReplayMemory(initial_replay_size, max_replay_size)
+
+        if 'n_models' in critic_params.keys():
+            assert critic_params['n_models'] == 2
+        else:
+            critic_params['n_models'] = 2
+
+        target_critic_params = deepcopy(critic_params)
+        self._critic_approximator = Regressor(TorchApproximator,
+                                              **critic_params)
+        self._target_critic_approximator = Regressor(TorchApproximator,
+                                                     **target_critic_params)
+
+        actor_approximator = Regressor(TorchApproximator,
+                                          **actor_params)
+
+        policy = SAC_gumbelPolicy(actor_approximator, temperature)
+
+        self._init_target(self._critic_approximator,
+                          self._target_critic_approximator)
+
+        self._log_alpha = torch.tensor(0., dtype=torch.float32)
+
+        if policy.use_cuda:
+            self._log_alpha = self._log_alpha.cuda().requires_grad_()
+        else:
+            self._log_alpha.requires_grad_()
+
+        self._alpha_optim = optim.Adam([self._log_alpha], lr=lr_alpha)
+
+        policy_parameters = actor_approximator.model.network.parameters()
+
+        self._add_save_attr(
+            _critic_fit_params='pickle',
+            _batch_size='mushroom',
+            _warmup_transitions='mushroom',
+            _tau='mushroom',
+            _target_entropy='primitive',
+            _replay_memory='mushroom',
+            _critic_approximator='mushroom',
+            _target_critic_approximator='mushroom',
+            _log_alpha='torch',
+            _alpha_optim='torch'
+        )
+
+        super().__init__(mdp_info, policy, actor_optimizer, policy_parameters)
+
+    def fit(self, dataset):
+        self._replay_memory.add(dataset)
+        if self._replay_memory.initialized:
+            state, action, reward, next_state, absorbing, _ = \
+                self._replay_memory.get(self._batch_size())
+
+            if self._replay_memory.size > self._warmup_transitions():
+                action_new, log_prob = self.policy.compute_action_and_log_prob_t(state)
+                loss = self._loss(state, action_new, log_prob)
+                self._optimize_actor_parameters(loss)
+                self._update_alpha(log_prob.detach())
+
+            q_next = self._next_q(next_state, absorbing)
+            q = reward + self.mdp_info.gamma * q_next
+
+            self._critic_approximator.fit(state, action, q,
+                                          **self._critic_fit_params)
+
+            self._update_target(self._critic_approximator,
+                                self._target_critic_approximator)
+
+    def _loss(self, state, action_new, log_prob):
+        q_0 = self._critic_approximator(state, action_new,
+                                        output_tensor=True, idx=0)
+        q_1 = self._critic_approximator(state, action_new,
+                                        output_tensor=True, idx=1)
+
+        q = torch.min(q_0, q_1)
+
+        return (self._alpha * log_prob - q).mean()
+
+    def _update_alpha(self, log_prob):
+        alpha_loss = - (self._log_alpha * (log_prob + self._target_entropy)).mean()
+        self._alpha_optim.zero_grad()
+        alpha_loss.backward()
+        self._alpha_optim.step()
+
+    def _next_q(self, next_state, absorbing):
+        """
+        Args:
+            next_state (np.ndarray): the states where next action has to be
+                evaluated;
+            absorbing (np.ndarray): the absorbing flag for the states in
+                ``next_state``.
+
+        Returns:
+            Action-values returned by the critic for ``next_state`` and the
+            action returned by the actor.
+
+        """
+        a, log_prob_next = self.policy.compute_action_and_log_prob(next_state)
+
+        q = self._target_critic_approximator.predict(
+            next_state, a, prediction='min') - self._alpha_np * log_prob_next
+        q *= 1 - absorbing
+
+        return q
+
+    def _post_load(self):
+        self._update_optimizer_parameters(self.policy.parameters())
+
+    @property
+    def _alpha(self):
+        return self._log_alpha.exp()
+
+    @property
+    def _alpha_np(self):
+        return self._alpha.detach().cpu().numpy()

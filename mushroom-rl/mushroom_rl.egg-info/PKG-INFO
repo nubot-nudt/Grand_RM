@@ -1,0 +1,22 @@
+Metadata-Version: 2.1
+Name: mushroom-rl
+Version: 1.7.1
+Summary: A Python library for Reinforcement Learning experiments.
+Home-page: https://github.com/MushroomRL/mushroom-rl
+Author: Carlo D'Eramo, Davide Tateo
+Author-email: carlo.deramo@gmail.com
+License: MIT
+Classifier: Programming Language :: Python :: 3
+Classifier: License :: OSI Approved :: MIT License
+Classifier: Operating System :: OS Independent
+Provides-Extra: gym
+Provides-Extra: atari
+Provides-Extra: box2d
+Provides-Extra: bullet
+Provides-Extra: mujoco
+Provides-Extra: plots
+Provides-Extra: minigrid
+Provides-Extra: all
+License-File: LICENSE
+
+MushroomRL is a Python Reinforcement Learning (RL) library whose modularity allows to easily use well-known Python libraries for tensor computation (e.g. PyTorch, Tensorflow) and RL benchmarks (e.g. OpenAI Gym, PyBullet, Deepmind Control Suite). It allows to perform RL experiments in a simple way providing classical RL algorithms (e.g. Q-Learning, SARSA, FQI), and deep RL algorithms (e.g. DQN, DDPG, SAC, TD3, TRPO, PPO). Full documentation available at http://mushroomrl.readthedocs.io/en/latest/.
